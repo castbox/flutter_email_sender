@@ -10,6 +10,7 @@ import android.content.ClipDescription
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
+import androidx.core.net.toUri
 import androidx.core.text.HtmlCompat
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -165,19 +166,51 @@ class FlutterEmailSenderPlugin
             intent.putExtra(Intent.EXTRA_BCC, listArrayToArray(bcc))
         }
 
-        val packageManager = activity?.packageManager
-
-        if (packageManager?.resolveActivity(intent, 0) != null) {
+        try {
             activity?.startActivityForResult(intent, REQUEST_CODE_SEND)
-        } else {
-            callback.error("not_available", "No email clients found!", null)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            if(attachmentUris.size == 1){//尝试另外一种方式发送
+                Intent(Intent.ACTION_SEND).apply {
+                    val attachmentUri =  attachmentUris.first()
+                    data = "mailto:".toUri()
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    selector = Intent(Intent.ACTION_SENDTO, "mailto:".toUri())
+                    putExtra(Intent.EXTRA_EMAIL, recipients)
+                    putExtra(Intent.EXTRA_SUBJECT, subject)
+                    putExtra(Intent.EXTRA_TEXT, text)
+                    putExtra(Intent.EXTRA_STREAM, attachmentUri)
+                    val clipItem = ClipData.Item(attachmentUri)
+                    val clipDescription = ClipDescription("", arrayOf("application/octet-stream"))
+                    val clipDataR = ClipData(clipDescription, clipItem)
+                    clipDataR.addItem(clipItem)
+                    clipData = clipDataR
+                }
+                try {
+                    activity?.startActivityForResult(
+                        Intent.createChooser(intent, "")
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        , REQUEST_CODE_SEND
+                    )
+                } catch (e2: Exception) {
+                    e2.printStackTrace()
+                    callback.error("error", "Error sending email2: ${e2.message}", null)
+                    channelResult = null
+                }
+            } else {
+                callback.error("error", "Error sending email: ${e.message}", null)
+                channelResult = null
+            }
         }
+
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         return when (requestCode) {
             REQUEST_CODE_SEND -> {
-                channelResult?.success(null)
+                runCatching {
+                    channelResult?.success(null)
+                }
                 channelResult = null
                 return true
             }
